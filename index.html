@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Geometric Neuron: Brainstem Cortical Loop</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050505;
+            color: #00ffcc;
+            font-family: monospace;
+            user-select: none;
+        }
+        canvas {
+            display: block;
+            cursor: grab;
+        }
+        canvas:active {
+            cursor: grabbing;
+        }
+        video {
+            display: none; 
+        }
+        .panel {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.85);
+            padding: 15px;
+            border: 1px solid #00ffcc;
+            border-radius: 5px;
+            line-height: 1.6;
+            backdrop-filter: blur(4px);
+            max-width: 320px;
+        }
+        #hud { top: 20px; left: 20px; pointer-events: none; }
+        #controls { bottom: 20px; left: 20px; }
+        #info { top: 20px; right: 20px; pointer-events: none; }
+        
+        .red { color: #ff0055; }
+        .white { color: #ffffff; }
+        .purple { color: #b055ff; }
+        .title { font-weight: bold; border-bottom: 1px solid #00ffcc; padding-bottom: 5px; margin-bottom: 10px; }
+        
+        input[type=range] { width: 100%; margin-top: 5px; margin-bottom: 10px; }
+        button { background: #00ffcc; color: #000; border: none; padding: 5px 10px; cursor: pointer; font-family: monospace; font-weight: bold;}
+        button:hover { background: #fff; }
+    </style>
+</head>
+<body>
+
+    <div id="hud" class="panel">
+        <div class="title">GEOMETRIC NEURON V5</div>
+        <span style="font-size: 0.9em; color: #888;">[Mouse Drag: Pan | Scroll: Zoom]</span><br><br>
+        Nodes: <span id="nodeCount" class="white">1</span> / <span id="maxNodeDisplay">25000</span><br>
+        Fractal Dim (D): <span id="fractalDim" class="white">0.000</span><br>
+        Root Tensor (Out): <span id="rootSignal" class="white">0.0000</span><br>
+        Brainstem (In): <span id="bsSignal" class="purple">0.0000</span><br>
+        Scale: <span id="scale">1.00</span>x<br><br>
+        <span class="white">&#9679;</span> Sensory Propagation<br>
+        <span class="red">&#9679;</span> Destructive Interference<br>
+        <span class="purple">&#9679;</span> Top-Down Brainstem Pulse
+    </div>
+
+    <div id="controls" class="panel">
+        <div class="title">SYSTEM LIMITS & DRIVE</div>
+        
+        <label>Brainstem Drive Amplitude: <span id="bsVal">1.00</span></label>
+        <input type="range" id="bsInput" min="0.0" max="3.0" step="0.1" value="1.0">
+
+        <label>Max Node Capacity: <span id="maxNodeVal">25000</span></label>
+        <input type="range" id="maxNodesInput" min="1000" max="50000" step="1000" value="25000">
+        
+        <label>Growth Rate (Samples/Frame): <span id="growthVal">200</span></label>
+        <input type="range" id="growthInput" min="10" max="1000" step="10" value="200">
+
+        <label>Signal Decay / Latency Loss: <span id="decayVal">0.98</span></label>
+        <input type="range" id="decayInput" min="0.80" max="1.00" step="0.01" value="0.98">
+
+        <button onclick="clearGraph()">RESET TOPOLOGY</button>
+    </div>
+
+    <div id="info" class="panel">
+        <div class="title">THEORY OF OPERATION</div>
+        <strong>1. Environmental Substrate</strong><br>
+        <span style="font-size: 0.9em; color: #ccc;">Webcam feed dictates resource gradients. Roots grow outward toward high luminance.</span><br><br>
+        
+        <strong>2. Top-Down Brainstem Carrier</strong><br>
+        <span style="font-size: 0.9em; color: #ccc;">The root node oscillates, sending an intrinsic carrier wave outward through the topology.</span><br><br>
+
+        <strong>3. Hybrid Logic Interference</strong><br>
+        <span style="font-size: 0.9em; color: #ccc;">Sensory signals propagate inward. At bifurcations, the sensory XOR logic is actively modulated by the top-down brainstem phase, embedding intrinsic agency into the visual filter.</span>
+    </div>
+
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const video = document.getElementById('video');
+        
+        let width, height;
+        let scale = 1.0;
+        let panX = 0, panY = 0;
+        let maxRadius = 10;
+        let globalTime = 0;
+        const stepSize = 8; 
+
+        // Graph data structure
+        let nodes = [];
+        let rootSignal = 0;
+        let currentBrainstem = 0;
+        let fractalDimension = 0;
+
+        let isDragging = false;
+        let lastMouseX = 0, lastMouseY = 0;
+
+        // UI Controls
+        const maxNodesInput = document.getElementById('maxNodesInput');
+        const growthInput = document.getElementById('growthInput');
+        const decayInput = document.getElementById('decayInput');
+        const bsInput = document.getElementById('bsInput');
+
+        maxNodesInput.oninput = () => { 
+            document.getElementById('maxNodeVal').innerText = maxNodesInput.value;
+            document.getElementById('maxNodeDisplay').innerText = maxNodesInput.value;
+        };
+        growthInput.oninput = () => document.getElementById('growthVal').innerText = growthInput.value;
+        decayInput.oninput = () => document.getElementById('decayVal').innerText = decayInput.value;
+        bsInput.oninput = () => document.getElementById('bsVal').innerText = bsInput.value;
+
+        function clearGraph() {
+            nodes = [];
+            maxRadius = 10;
+            scale = 1.0;
+            panX = 0;
+            panY = 0;
+            globalTime = 0;
+            resize();
+        }
+
+        function resize() {
+            width = window.innerWidth;
+            height = window.innerHeight;
+            canvas.width = width;
+            canvas.height = height;
+            if (nodes.length === 0) {
+                nodes.push({ 
+                    x: width/2, 
+                    y: height/2, 
+                    parent: null, 
+                    children: [],
+                    accumulated: 0, 
+                    topDown: 0,
+                    depth: 0,
+                    logicState: 'root'
+                });
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+        });
+        window.addEventListener('mouseup', () => isDragging = false);
+        window.addEventListener('mouseleave', () => isDragging = false);
+        window.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                panX += (e.clientX - lastMouseX);
+                panY += (e.clientY - lastMouseY);
+                lastMouseX = e.clientX;
+                lastMouseY = e.clientY;
+            }
+        });
+        canvas.addEventListener('wheel', (e) => {
+            const zoomAmount = 0.1;
+            const mouseX = e.clientX;
+            const mouseY = e.clientY;
+            const wheel = e.deltaY < 0 ? 1 : -1;
+            const zoom = Math.exp(wheel * zoomAmount);
+            const newScale = scale * zoom;
+            
+            panX = mouseX - (mouseX - panX) * zoom;
+            panY = mouseY - (mouseY - panY) * zoom;
+            scale = newScale;
+        });
+
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(stream => {
+                video.srcObject = stream;
+                video.play();
+            })
+            .catch(err => console.error("Camera access denied:", err));
+
+        const offCanvas = document.createElement('canvas');
+        const offCtx = offCanvas.getContext('2d', { willReadFrequently: true });
+
+        function processFrame() {
+            if (video.readyState !== video.HAVE_ENOUGH_DATA) {
+                requestAnimationFrame(processFrame);
+                return;
+            }
+
+            globalTime += 0.05; // Advance the biological clock
+
+            offCanvas.width = video.videoWidth;
+            offCanvas.height = video.videoHeight;
+            offCtx.drawImage(video, 0, 0, offCanvas.width, offCanvas.height);
+            const frameData = offCtx.getImageData(0, 0, offCanvas.width, offCanvas.height).data;
+
+            const maxNodes = parseInt(maxNodesInput.value);
+            if (nodes.length < maxNodes) {
+                growDendrites(frameData, parseInt(growthInput.value));
+            }
+            
+            calculateMetrics(frameData, parseFloat(decayInput.value));
+            render();
+
+            requestAnimationFrame(processFrame);
+        }
+
+        function growDendrites(frameData, growthAttempts) {
+            const maxAttraction = 80;  
+
+            for (let i = 0; i < growthAttempts; i++) {
+                if (nodes.length >= parseInt(maxNodesInput.value)) break;
+
+                const vx = Math.floor(Math.random() * offCanvas.width);
+                const vy = Math.floor(Math.random() * offCanvas.height);
+                const index = (vy * offCanvas.width + vx) * 4;
+                const luminance = (0.299 * frameData[index] + 0.587 * frameData[index + 1] + 0.114 * frameData[index + 2]);
+
+                if (luminance > 100) { 
+                    const screenX = (vx / offCanvas.width) * width;
+                    const screenY = (vy / offCanvas.height) * height;
+
+                    const targetX = (screenX - panX) / scale;
+                    const targetY = (screenY - panY) / scale;
+
+                    let nearest = null;
+                    let minDist = Infinity;
+
+                    for (let j = nodes.length - 1; j >= 0; j--) {
+                        const node = nodes[j];
+                        const dx = targetX - node.x;
+                        const dy = targetY - node.y;
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearest = node;
+                        }
+                    }
+
+                    if (nearest && minDist > stepSize && minDist < maxAttraction) {
+                        const angle = Math.atan2(targetY - nearest.y, targetX - nearest.x);
+                        const newX = nearest.x + Math.cos(angle) * stepSize;
+                        const newY = nearest.y + Math.sin(angle) * stepSize;
+
+                        const distFromCenter = Math.sqrt(Math.pow(newX - width/2, 2) + Math.pow(newY - height/2, 2));
+                        if (distFromCenter > maxRadius) maxRadius = distFromCenter;
+
+                        const newNode = {
+                            x: newX,
+                            y: newY,
+                            parent: nearest,
+                            children: [],
+                            accumulated: 0,
+                            topDown: 0,
+                            depth: nearest.depth + 1,
+                            logicState: 'none'
+                        };
+
+                        nearest.children.push(newNode);
+                        nodes.push(newNode);
+                    }
+                }
+            }
+        }
+
+        function calculateMetrics(frameData, decay) {
+            
+            // 1. TOP-DOWN PASS (Brainstem Carrier Wave)
+            const driveAmplitude = parseFloat(bsInput.value);
+            currentBrainstem = Math.sin(globalTime) * driveAmplitude;
+            nodes[0].topDown = currentBrainstem;
+
+            for (let i = 1; i < nodes.length; i++) {
+                // Propagate the carrier wave outward, slightly decaying
+                nodes[i].topDown = nodes[i].parent.topDown * 0.99;
+            }
+
+            // 2. SENSORY INJECTION (Leaves)
+            for (const node of nodes) {
+                if (node.children.length === 0) {
+                    const screenX = node.x * scale + panX;
+                    const screenY = node.y * scale + panY;
+                    
+                    const vx = Math.floor((screenX / width) * offCanvas.width);
+                    const vy = Math.floor((screenY / height) * offCanvas.height);
+                    
+                    if (vx >= 0 && vx < offCanvas.width && vy >= 0 && vy < offCanvas.height) {
+                        const index = (vy * offCanvas.width + vx) * 4;
+                        const lum = (0.299 * frameData[index] + 0.587 * frameData[index+1] + 0.114 * frameData[index+2]);
+                        node.accumulated = lum / 255.0;
+                    }
+                } else {
+                    node.accumulated = 0;
+                }
+            }
+
+            // 3. BOTTOM-UP PASS (Hybrid Interference)
+            for (let i = nodes.length - 1; i >= 0; i--) {
+                const node = nodes[i];
+                
+                if (node.children.length === 1) {
+                    node.accumulated = node.children[0].accumulated * decay;
+                    node.logicState = node.accumulated > 0.1 ? 'transmit' : 'idle';
+                } else if (node.children.length >= 2) {
+                    let signal1 = node.children[0].accumulated;
+                    let signal2 = node.children[1].accumulated;
+                    
+                    for (let c = 2; c < node.children.length; c++) {
+                        signal2 += node.children[c].accumulated; 
+                    }
+
+                    // Base destructive interference (XOR)
+                    let baseInterference = Math.abs(signal1 - signal2);
+                    
+                    // The brainstem wave modulates the interference amplitude
+                    // A positive phase amplifies the sensory data; a negative phase dampens it.
+                    node.accumulated = baseInterference * decay * (1.0 + node.topDown);
+
+                    if (signal1 > 0.3 && signal2 > 0.3) {
+                        node.logicState = 'destructive';
+                    } else if (node.accumulated > 0.1) {
+                        node.logicState = 'constructive';
+                    } else {
+                        node.logicState = 'idle';
+                    }
+                }
+                
+                // Override visual state if the top-down signal is currently dominating this node
+                if (Math.abs(node.topDown) > 0.5 && node.logicState === 'idle') {
+                    node.logicState = 'brainstem_driven';
+                }
+            }
+
+            rootSignal = nodes[0].accumulated;
+
+            if (maxRadius > stepSize && nodes.length > 1) {
+                fractalDimension = Math.log(nodes.length) / Math.log(maxRadius / stepSize);
+            }
+
+            document.getElementById('nodeCount').innerText = nodes.length;
+            document.getElementById('rootSignal').innerText = rootSignal.toFixed(4);
+            document.getElementById('bsSignal').innerText = currentBrainstem.toFixed(4);
+            document.getElementById('fractalDim').innerText = fractalDimension.toFixed(3);
+        }
+
+        function render() {
+            ctx.fillStyle = '#050505';
+            ctx.fillRect(0, 0, width, height);
+
+            ctx.save();
+            ctx.translate(panX, panY);
+            ctx.scale(scale, scale);
+
+            ctx.strokeStyle = 'rgba(0, 255, 200, 0.15)';
+            ctx.lineWidth = 1 / scale; 
+            ctx.beginPath();
+            for (let i = 1; i < nodes.length; i++) {
+                const node = nodes[i];
+                ctx.moveTo(node.x, node.y);
+                ctx.lineTo(node.parent.x, node.parent.y);
+            }
+            ctx.stroke();
+
+            const nodeSize = Math.max(0.5, 2 / scale);
+            for (let i = 1; i < nodes.length; i++) {
+                const node = nodes[i];
+                
+                if (node.logicState === 'destructive') {
+                    ctx.fillStyle = `rgba(255, 0, 85, 1.0)`;
+                    ctx.fillRect(node.x - nodeSize, node.y - nodeSize, nodeSize*2, nodeSize*2);
+                } else if (node.logicState === 'brainstem_driven') {
+                    // Visualize the top-down pulse sweeping through the network
+                    const intensity = Math.min(1, Math.abs(node.topDown));
+                    ctx.fillStyle = `rgba(176, 85, 255, ${intensity})`;
+                    ctx.fillRect(node.x - nodeSize/2, node.y - nodeSize/2, nodeSize, nodeSize);
+                } else if (node.logicState === 'constructive' || node.logicState === 'transmit' || node.logicState === 'active_tip') {
+                    const intensity = Math.min(1, node.accumulated * 2);
+                    ctx.fillStyle = `rgba(255, 255, 255, ${intensity})`;
+                    ctx.fillRect(node.x - nodeSize/2, node.y - nodeSize/2, nodeSize, nodeSize);
+                }
+            }
+
+            // Draw Root
+            ctx.fillStyle = '#b055ff'; // Root matches brainstem color
+            ctx.beginPath();
+            const rootPulse = 6 + (currentBrainstem * 2);
+            ctx.arc(nodes[0].x, nodes[0].y, rootPulse / scale, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        processFrame();
+
+    </script>
+</body>
+</html>
