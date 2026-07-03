@@ -2,64 +2,76 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Geometric Neuron V5 + Resonator Memory</title>
+<title>Geometric Neuron V6: TRT & Resonator ALU</title>
 <style>
-    body { margin:0; overflow:hidden; background:#050505; color:#00ffcc; font-family:monospace; }
-    canvas { display:block; }
+    body { margin:0; overflow:hidden; background:#0b0e14; color:#00ffcc; font-family:monospace; }
+    canvas { display:block; cursor: grab; }
+    canvas:active { cursor: grabbing; }
     .panel {
-        position:absolute; background:rgba(0,0,0,0.85); padding:15px; border:1px solid #00ffcc;
-        border-radius:5px; max-width:320px; line-height:1.5;
+        position:absolute; background:rgba(18, 22, 31, 0.85); padding:15px; border:1px solid #4fd1c5;
+        border-radius:8px; max-width:320px; line-height:1.5; box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
     #hud { top:20px; left:20px; }
     #controls { bottom:20px; left:20px; }
     #info { top:20px; right:20px; }
-    input[type=range] { width:100%; }
-    button { background:#00ffcc; color:#000; border:none; padding:8px 12px; cursor:pointer; font-weight:bold; }
-    .red { color:#ff0055; }
-    .purple { color:#c084fc; }
+    input[type=range] { width:100%; margin: 8px 0; }
+    button { background:#4fd1c5; color:#0b0e14; border:none; padding:8px 12px; cursor:pointer; font-weight:bold; border-radius: 4px; }
+    button:hover { background:#f2b84b; }
+    .red { color:#e6636b; font-weight: bold; }
+    .purple { color:#c084fc; font-weight: bold; }
+    .cyan { color:#4fd1c5; font-weight: bold; }
+    h3 { margin: 0 0 10px 0; font-size: 14px; text-transform: uppercase; color: #8a93a8; }
 </style>
 </head>
 <body>
 
 <div id="hud" class="panel">
-    <strong>GEOMETRIC NEURON V5 + RESONATOR</strong><br>
-    Nodes: <span id="nodeCount">1</span>/25000<br>
-    Fractal D: <span id="fractalDim">0.000</span><br>
-    Root Tensor: <span id="rootSignal">0.0000</span><br>
-    Brainstem: <span id="bsSignal" class="purple">0.0000</span>
+    <h3>Geometric Neuron: TRT ALU</h3>
+    Nodes: <span id="nodeCount" class="cyan">1</span> / 25000<br>
+    Fractal D: <span id="fractalDim" class="cyan">0.000</span><br>
+    Root Tensor: <span id="rootSignal" class="cyan">0.0000</span><br>
+    TRT Invariants: <span id="trtCount" class="purple">0</span><br>
+    Brainstem Phase: <span id="bsSignal" class="purple">0.0000</span>
 </div>
 
 <div id="controls" class="panel">
-    <strong>SYSTEM</strong><br>
-    Brainstem Amp: <span id="bsVal">1.0</span><br>
-    <input type="range" id="bsInput" min="0" max="3" step="0.1" value="1.0"><br>
-    Growth Rate: <span id="growthVal">200</span><br>
-    <input type="range" id="growthInput" min="10" max="800" step="10" value="200"><br>
-    <button onclick="resetAll()">RESET ALL</button>
-    <button onclick="toggleMemory()">Toggle Memory Loops</button>
+    <h3>System Drive</h3>
+    Brainstem Amp: <span id="bsVal" class="cyan">1.0</span><br>
+    <input type="range" id="bsInput" min="0" max="3" step="0.1" value="1.0">
+    Growth Rate: <span id="growthVal" class="cyan">200</span><br>
+    <input type="range" id="growthInput" min="10" max="800" step="10" value="200">
+    TRT Time Delay (&tau;): <span id="tauVal" class="cyan">2</span><br>
+    <input type="range" id="tauInput" min="1" max="10" step="1" value="2">
+    <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button onclick="resetAll()">RESET</button>
+        <button onclick="toggleMemory()">TOGGLE MEMORY</button>
+    </div>
 </div>
 
 <div id="info" class="panel">
-    <strong>THEORY</strong><br>
-    <small>Fractal growth + phasor logic.<br>
-    Resonant loops = memory.</small>
+    <h3>Theory of Operation</h3>
+    <small>
+    <span class="cyan">&#9679;</span> <strong>TRT Decomposition:</strong> 1D signals are mapped to phase-space invariants.<br><br>
+    <span class="red">&#9679;</span> <strong>Phasor Logic:</strong> Nodes execute continuous XOR/AND logic via wave cancellation.<br><br>
+    <span class="purple">&#9679;</span> <strong>Resonant Memory:</strong> TRT invariants that achieve geometric resonance freeze into cyclic standing waves.
+    </small>
 </div>
 
 <video id="video" autoplay playsinline style="display:none"></video>
 <canvas id="canvas"></canvas>
 
 <script>
-// ============== CORE PARAMETERS ==============
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const video = document.getElementById('video');
 
 let width, height, scale = 1, panX = 0, panY = 0;
 let nodes = [];
 let globalTime = 0;
 let enableMemoryLoops = true;
+let activeTRTNodes = 0;
 
-// Resonator config (from your adder)
+// Oscillator Logic Gates
 const GATE_CFG = {
     XOR: { w:[1,1], bias:0,   lo:-0.1, hi:1.0 },
     AND: { w:[1,1], bias:-2,  lo:3.0, hi:99 },
@@ -68,18 +80,29 @@ const GATE_CFG = {
 
 function encodeBit(b) { return b === 0 ? {re:1, im:0} : {re:-1, im:0}; }
 
-// ============== GRAPH NODE ==============
+function resonatorCompute(kind, inputs) {
+    const cfg = GATE_CFG[kind] || GATE_CFG.XOR;
+    let re = cfg.bias, im = 0;
+    inputs.forEach((bit, i) => {
+        const p = encodeBit(bit);
+        re += cfg.w[i] * p.re;
+        im += cfg.w[i] * p.im;
+    });
+    const amp = Math.hypot(re, im);
+    const fired = (amp >= cfg.lo && amp <= cfg.hi) ? 1 : 0;
+    return {amp, fired, re, im};
+}
+
 function createRoot() {
     nodes = [{
         x: width/2, y: height/2,
         parent: null, children: [],
         accumulated: 0, topDown: 0,
-        depth: 0, logicState: 'root',
-        phase: 0, memory: 0  // for standing wave memory
+        history: [], // Takens embedding buffer
+        depth: 0, logicState: 'root', memory: 0
     }];
 }
 
-// ============== GROWTH & SIGNAL ==============
 function growDendrites(frameData, attempts) {
     const maxAttraction = 80;
     for (let i = 0; i < attempts; i++) {
@@ -89,7 +112,7 @@ function growDendrites(frameData, attempts) {
         const idx = (vy * video.videoWidth + vx) * 4;
         const lum = 0.299*frameData[idx] + 0.587*frameData[idx+1] + 0.114*frameData[idx+2];
 
-        if (lum > 100) {
+        if (lum > 90) {
             const tx = (vx / video.videoWidth) * width;
             const ty = (vy / video.videoHeight) * height;
             const targetX = (tx - panX) / scale;
@@ -108,15 +131,9 @@ function growDendrites(frameData, attempts) {
                 const ny = nearest.y + Math.sin(angle) * 8;
 
                 const newNode = {
-                    x: nx, y: ny,
-                    parent: nearest,
-                    children: [],
-                    accumulated: 0,
-                    topDown: 0,
-                    depth: nearest.depth + 1,
-                    logicState: 'none',
-                    phase: 0,
-                    memory: 0
+                    x: nx, y: ny, parent: nearest, children: [],
+                    accumulated: 0, topDown: 0, history: [],
+                    depth: nearest.depth + 1, logicState: 'none', memory: 0
                 };
                 nearest.children.push(newNode);
                 nodes.push(newNode);
@@ -125,21 +142,6 @@ function growDendrites(frameData, attempts) {
     }
 }
 
-// Simple resonator compute
-function resonatorCompute(kind, inputs) {
-    const cfg = GATE_CFG[kind] || GATE_CFG.XOR;
-    let re = cfg.bias, im = 0;
-    inputs.forEach((bit, i) => {
-        const p = encodeBit(bit);
-        re += cfg.w[i] * p.re;
-        im += cfg.w[i] * p.im;
-    });
-    const amp = Math.hypot(re, im);
-    const fired = (amp >= cfg.lo && amp <= cfg.hi) ? 1 : 0;
-    return {amp, fired, re, im};
-}
-
-// ============== MAIN LOOP ==============
 function processFrame() {
     if (video.readyState < 2) { requestAnimationFrame(processFrame); return; }
 
@@ -150,47 +152,65 @@ function processFrame() {
     octx.drawImage(video, 0, 0);
     const data = octx.getImageData(0,0,off.width,off.height).data;
 
-    if (nodes.length < 25000) growDendrites(data, 200);
+    const growthRate = parseInt(document.getElementById('growthInput').value);
+    const tauDelay = parseInt(document.getElementById('tauInput').value);
+    
+    if (nodes.length < 25000) growDendrites(data, growthRate);
 
-    // Brainstem carrier
     const bsAmp = parseFloat(document.getElementById('bsInput').value);
-    const bs = Math.sin(globalTime) * bsAmp;
-    nodes[0].topDown = bs;
+    nodes[0].topDown = Math.sin(globalTime) * bsAmp;
 
-    // Propagate top-down
     for (let i = 1; i < nodes.length; i++) {
         nodes[i].topDown = nodes[i].parent.topDown * 0.98;
     }
 
-    // Sensory at tips + memory resonance
-    for (let node of nodes) {
-        if (node.children.length === 0) {
-            // sample webcam
-            const sx = node.x * scale + panX;
-            const sy = node.y * scale + panY;
+    activeTRTNodes = 0;
+
+    for (let i = nodes.length-1; i >= 0; i--) {
+        const n = nodes[i];
+        
+        if (n.children.length === 0) {
+            const sx = n.x * scale + panX;
+            const sy = n.y * scale + panY;
             const vx = Math.floor((sx / width) * off.width);
             const vy = Math.floor((sy / height) * off.height);
             if (vx >= 0 && vx < off.width && vy >= 0 && vy < off.height) {
                 const idx = (vy * off.width + vx) * 4;
-                const lum = 0.299*data[idx] + 0.587*data[idx+1] + 0.114*data[idx+2];
-                node.accumulated = lum / 255;
+                n.accumulated = (0.299*data[idx] + 0.587*data[idx+1] + 0.114*data[idx+2]) / 255;
             }
-        }
-        // Simple memory resonance
-        if (enableMemoryLoops && node.children.length > 1) {
-            node.memory = (node.memory + node.topDown * 0.3) * 0.92;
-        }
-    }
-
-    // Bottom-up propagation (simplified for demo)
-    for (let i = nodes.length-1; i >= 0; i--) {
-        const n = nodes[i];
-        if (n.children.length === 0) continue;
-        if (n.children.length === 1) {
+        } else if (n.children.length === 1) {
             n.accumulated = n.children[0].accumulated * 0.95;
         } else {
-            // demo interference
-            n.accumulated = Math.abs(n.children[0].accumulated - n.children[1].accumulated || 0) * 0.9;
+            n.accumulated = Math.abs(n.children[0].accumulated - n.children[1].accumulated) * 0.95;
+        }
+
+        // Takens-Rajapinta Transform (TRT) Embedding
+        n.history.unshift(n.accumulated);
+        if (n.history.length > tauDelay * 2 + 1) n.history.pop();
+
+        if (n.history.length >= tauDelay * 2 + 1) {
+            // Extract topological invariant (phase curvature)
+            const x_t = n.history[0];
+            const x_t_tau = n.history[tauDelay];
+            const x_t_2tau = n.history[tauDelay * 2];
+            
+            const trtInvariant = Math.abs(x_t - 2 * x_t_tau + x_t_2tau);
+
+            // Resonator ALU Logic
+            const sensoryBit = trtInvariant > 0.05 ? 1 : 0;
+            const bsBit = Math.abs(n.topDown) > 0.2 ? 1 : 0;
+            
+            const aluResult = resonatorCompute('XOR', [sensoryBit, bsBit]);
+
+            if (aluResult.fired) {
+                n.logicState = 'destructive'; // Red
+            } else if (trtInvariant > 0.05) {
+                n.logicState = 'trt_active'; // Purple (Invariant extracted)
+                activeTRTNodes++;
+                if (enableMemoryLoops) n.memory = (n.memory + aluResult.amp * 0.1) * 0.95;
+            } else {
+                n.logicState = 'constructive'; // Cyan
+            }
         }
     }
 
@@ -203,96 +223,79 @@ function updateUI() {
     document.getElementById('nodeCount').textContent = nodes.length;
     document.getElementById('rootSignal').textContent = nodes[0].accumulated.toFixed(4);
     document.getElementById('bsSignal').textContent = nodes[0].topDown.toFixed(4);
+    document.getElementById('trtCount').textContent = activeTRTNodes;
+    document.getElementById('tauVal').textContent = document.getElementById('tauInput').value;
+    document.getElementById('growthVal').textContent = document.getElementById('growthInput').value;
+    document.getElementById('bsVal').textContent = document.getElementById('bsInput').value;
+
+    if (nodes.length > 1) {
+        let maxRad = 0;
+        nodes.forEach(n => { maxRad = Math.max(maxRad, Math.hypot(n.x - width/2, n.y - height/2)); });
+        const fd = Math.log(nodes.length) / Math.log(maxRad / 8);
+        document.getElementById('fractalDim').textContent = Math.max(0, fd).toFixed(3);
+    }
 }
 
 function render() {
-    ctx.fillStyle = '#050505';
+    ctx.fillStyle = '#0b0e14';
     ctx.fillRect(0, 0, width, height);
 
     ctx.save();
     ctx.translate(panX, panY);
     ctx.scale(scale, scale);
 
-    // edges
-    ctx.strokeStyle = 'rgba(0,255,200,0.15)';
+    ctx.strokeStyle = '#232938';
     ctx.lineWidth = 1/scale;
     ctx.beginPath();
     for (let i = 1; i < nodes.length; i++) {
-        const n = nodes[i];
-        ctx.moveTo(n.x, n.y);
-        ctx.lineTo(n.parent.x, n.parent.y);
+        ctx.moveTo(nodes[i].x, nodes[i].y);
+        ctx.lineTo(nodes[i].parent.x, nodes[i].parent.y);
     }
     ctx.stroke();
 
-    // nodes
     for (let n of nodes) {
         const size = Math.max(1.5, 3 / scale);
         if (n.logicState === 'root') {
-            ctx.fillStyle = '#00ffcc';
-            ctx.beginPath();
-            ctx.arc(n.x, n.y, 8, 0, Math.PI*2);
-            ctx.fill();
-        } else if (enableMemoryLoops && Math.abs(n.memory) > 0.3) {
-            ctx.fillStyle = '#c084fc'; // purple resonant memory
+            ctx.fillStyle = '#f2b84b';
+            ctx.beginPath(); ctx.arc(n.x, n.y, 8/scale, 0, Math.PI*2); ctx.fill();
+        } else if (n.logicState === 'destructive') {
+            ctx.fillStyle = '#e6636b';
             ctx.fillRect(n.x-size, n.y-size, size*2, size*2);
-        } else if (n.accumulated > 0.3) {
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(n.x-size/2, n.y-size/2, size, size);
-        } else {
-            ctx.fillStyle = '#555';
+        } else if (n.logicState === 'trt_active' || (enableMemoryLoops && n.memory > 0.2)) {
+            ctx.fillStyle = '#c084fc'; 
+            ctx.fillRect(n.x-size, n.y-size, size*2, size*2);
+        } else if (n.accumulated > 0.1) {
+            ctx.fillStyle = '#4fd1c5';
             ctx.fillRect(n.x-size/2, n.y-size/2, size, size);
         }
     }
     ctx.restore();
 }
 
-// Controls & resize
 function resize() {
-    width = window.innerWidth;
-    height = window.innerHeight;
-    canvas.width = width;
-    canvas.height = height;
+    width = window.innerWidth; height = window.innerHeight;
+    canvas.width = width; canvas.height = height;
     if (nodes.length === 0) createRoot();
 }
 window.addEventListener('resize', resize);
 
-document.getElementById('bsInput').oninput = () => {
-    document.getElementById('bsVal').textContent = parseFloat(document.getElementById('bsInput').value).toFixed(1);
-};
+function resetAll() { nodes = []; createRoot(); }
+function toggleMemory() { enableMemoryLoops = !enableMemoryLoops; }
 
-function resetAll() {
-    nodes = [];
-    createRoot();
-}
-
-function toggleMemory() {
-    enableMemoryLoops = !enableMemoryLoops;
-}
-
-// Mouse controls (pan/zoom) - abbreviated for brevity
 let isDragging = false, lastX, lastY;
 canvas.addEventListener('mousedown', e => { isDragging=true; lastX=e.clientX; lastY=e.clientY; });
 window.addEventListener('mouseup', () => isDragging=false);
 window.addEventListener('mousemove', e => {
-    if (isDragging) {
-        panX += e.clientX - lastX;
-        panY += e.clientY - lastY;
-        lastX = e.clientX; lastY = e.clientY;
-    }
+    if (isDragging) { panX += e.clientX - lastX; panY += e.clientY - lastY; lastX = e.clientX; lastY = e.clientY; }
 });
 canvas.addEventListener('wheel', e => {
     const factor = e.deltaY < 0 ? 1.1 : 0.9;
-    const mx = e.clientX, my = e.clientY;
-    panX = mx - (mx - panX) * factor;
-    panY = my - (my - panY) * factor;
+    panX = e.clientX - (e.clientX - panX) * factor;
+    panY = e.clientY - (e.clientY - panY) * factor;
     scale *= factor;
 });
 
-// Webcam
-navigator.mediaDevices.getUserMedia({video:true}).then(s => {
-    video.srcObject = s;
-    video.play();
-}).catch(console.error);
+navigator.mediaDevices.getUserMedia({video:true}).then(s => { video.srcObject = s; video.play(); }).catch(console.error);
 
 resize();
 processFrame();
