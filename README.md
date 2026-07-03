@@ -38,4 +38,4 @@ Future iterations will explore output routing—specifically, utilizing the root
 
 ## **License**
 
-See the LICENSE file for details\[cite: 7\].  
+mit
