@@ -1,5 +1,7 @@
 # **Geometric Neuron V5: Brainstem-Modulated Cortical Loop**
 
+Live at: https://anttiluode.github.io/GeometricNeuronFractal/ 
+
 ![pic](pic.png)
 
 This repository contains an experimental, interactive prototype of a dynamically growing, biologically-inspired neural architecture. Unlike traditional artificial neural networks that rely on dense, static weight matrices, the Geometric Neuron builds a sparse, topological graph in real-time. It maps temporal data into physical spatial dimensions, utilizing wave interference and phase cancellation as its primary computational mechanisms.
